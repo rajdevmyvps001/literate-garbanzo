@@ -5,8 +5,7 @@
   "type": "module",
   "main": "index.js",
   "scripts": {
-    "start": "node index.js",
-    "pm2": "pm2 start ecosystem.config.cjs"
+    "start": "node index.js"
   },
   "dependencies": {
     "@hapi/boom": "^10.0.1",

@@ -1,1 +1,1 @@
-import './index2.js'
+import './main.js'

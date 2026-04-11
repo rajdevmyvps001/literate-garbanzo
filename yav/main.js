@@ -1,5 +1,5 @@
 // ═══════════════════════════════════════════════════════
-//   🧛 VAMPIRE DIARIES — MAIN CONNECTION
+//   🧛 VAMPIRE DIARIES — MAIN CONNECTION (CLEAN VERSION)
 //   ✷  THE ARCHITECT  x  ASTRAL ANIME
 // ═══════════════════════════════════════════════════════
 
@@ -12,17 +12,16 @@ import makeWASocket, {
 } from 'baileys'
 
 import { mkdirSync, existsSync, readFileSync } from 'fs'
+import mongoose from 'mongoose' // MongoDB ke liye add kiya gaya
 import config from './config.js'
 import { handleMessage, handleGroupParticipants } from './handler.js'
 import { startMonitor } from './plugins/game/monitor.js'
 
-// Watchdog heartbeat — imported lazily to avoid circular dep with index2.js
-let _bumpHeartbeat = null
+// ── Heartbeat System ───────────────────────────────────
+// Pehle ye index2.js par depend tha, ab ye independent hai
 async function bumpHeartbeat() {
-  if (!_bumpHeartbeat) {
-    try { _bumpHeartbeat = (await import('./index2.js')).bumpHeartbeat } catch {}
-  }
-  _bumpHeartbeat?.()
+  // VPS PM2 handles restart, so we just log or skip
+  return
 }
 
 const LABEL = process.env.BOT_LABEL || 'VampireDiaries'
@@ -116,7 +115,7 @@ process.on('unhandledRejection', (reason) => {
   botLog('💥 unhandledRejection:', reason?.message ?? reason)
 })
 
-// ── PM2 graceful shutdown ──────────────────────────────
+// ── Graceful shutdown ──────────────────────────────────
 async function gracefulShutdown(signal) {
   if (isShuttingDown) return
   isShuttingDown = true
@@ -150,6 +149,16 @@ export async function startBot() {
     mkdirSync('./logs',    { recursive: true })
     mkdirSync('./session', { recursive: true })
 
+    // ── MongoDB Connection ─────────────────────────────
+    if (mongoose.connection.readyState !== 1) {
+      botLog('Connecting to MongoDB...')
+      // config.js se mongodbUri uthayega
+      await mongoose.connect(config.mongodbUri).catch(err => {
+        botLog('❌ MongoDB Connection Error:', err.message)
+      })
+      botLog('✅ MongoDB Connected!')
+    }
+
     if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null }
 
     // Tear down old socket
@@ -157,11 +166,7 @@ export async function startBot() {
     activeSock = null
     teardown(oldSock)
 
-    // Clear dedup — Baileys may replay messages on reconnect
     processedIds.clear()
-    // NOTE: pairingRequested intentionally NOT reset here.
-    // Resetting on every startBot() causes a second pairing request
-    // after reconnect which WhatsApp rejects and kills the session.
 
     // ── Auth state ─────────────────────────────────────
     const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR)
@@ -200,8 +205,6 @@ export async function startBot() {
     sock.ev.on('creds.update', saveCreds)
 
     // ── Pairing code ───────────────────────────────────
-    // Only requested once per process life — never on reconnect.
-    // Re-requesting after reconnect is what kills the session.
     if (!sock.authState.creds.registered && !pairingRequested) {
       pairingRequested = true
       await new Promise(r => setTimeout(r, 3000))
@@ -243,34 +246,28 @@ export async function startBot() {
 
       if (connection === 'close') {
         const code      = lastDisconnect?.error?.output?.statusCode
-        const loggedOut = code === DisconnectReason.loggedOut   // 401
-        const conflict  = code === DisconnectReason.conflict    // 440
+        const loggedOut = code === DisconnectReason.loggedOut
+        const conflict  = code === DisconnectReason.conflict
         botLog(`❌ Connection closed (code ${code ?? 'unknown'})`)
 
         if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null }
 
         if (loggedOut) {
-          // DO NOT delete auth or exit — just reconnect.
-          // Deleting auth on 401 is what permanently kills the session.
-          botLog('⚠️ Got logout signal (401) — reconnecting without wiping auth...')
+          botLog('⚠️ Got logout signal (401) — reconnecting...')
           reconnectAttempt = 0
           scheduleReconnect()
           return
         }
 
         if (conflict) {
-          // Another session opened — wait longer then reconnect
-          botLog('⚠️ Session conflict (440) — another session detected. Reconnecting in 15s...')
+          botLog('⚠️ Session conflict (440). Reconnecting in 15s...')
           reconnectTimer = setTimeout(() => startBot(), 15_000)
           return
         }
 
-        // Pairing never completed — reset so fresh code is requested
         if (!wasEverConnected) {
           pairingRequested = false
-          botLog('🔄 Pairing incomplete — will request a new code on reconnect')
         }
-
         scheduleReconnect()
       }
 
@@ -280,7 +277,6 @@ export async function startBot() {
         botLog(`\n✅ Vampire Diaries connected! (prefix="${sock._prefix}")\n`)
         reconnectAttempt = 0
 
-        // Only DM on the very first connection of this process — not on every Baileys reconnect
         if (!wasEverConnected) {
           wasEverConnected = true
           const time = new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true })
@@ -338,3 +334,10 @@ export async function startBot() {
     isStarting = false
   }
 }
+
+// ── Boot ───────────────────────────────────────────────
+// Bot ko start karne ke liye call
+startBot();
+
+// Keep process alive for VPS
+setInterval(() => {}, 1000 * 60 * 60);

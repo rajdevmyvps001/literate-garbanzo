@@ -6,6 +6,7 @@
 // ═══════════════════════════════════════════════════════
 import mongoose from 'mongoose'
 import config   from '../config.js'
+// ═══════════════════════════════════════════════════════
 
 // ── Connection ─────────────────────────────────────────
 let connected = false
@@ -15,15 +16,26 @@ export function isMongoConnected() { return connected }
 
 export async function connectMongo() {
   if (connected) return
-  const uri = process.env.MONGODB_URI || config.mongoUri
+  
+  const uri = process.env.MONGODB_URI || config.mongodbUri 
+  
   if (!uri) {
-    console.warn('[MongoDB] No MONGODB_URI set — set MONGODB_URI in ecosystem.config.cjs')
+    console.warn('[MongoDB] No MONGODB_URI set in environment or config.js')
     return
   }
+  
   mongoose.set('bufferCommands', false)
-  await mongoose.connect(uri, { dbName: 'vampire-diaries', serverSelectionTimeoutMS: 5000, socketTimeoutMS: 10000 })
-  connected = true
-  console.log('[MongoDB] ✅ Connected to MongoDB')
+  try {
+    await mongoose.connect(uri, { 
+      dbName: 'vampire-diaries', 
+      serverSelectionTimeoutMS: 5000, 
+      socketTimeoutMS: 10000 
+    })
+    connected = true
+    console.log('[MongoDB] ✅ Connected to MongoDB')
+  } catch (err) {
+    console.error('[MongoDB] ❌ Connection error:', err.message)
+  }
 }
 
 // ══════════════════════════════════════════════════════
